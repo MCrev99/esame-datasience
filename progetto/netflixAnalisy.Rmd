@@ -1,0 +1,397 @@
+---
+title: "netflix analysis"
+author: "Crevatin Marco 152049"
+date: "2022-05-9"
+output:
+  ioslides_presentation:
+    css: style.css
+    df_print: kable
+    widescreen: yes
+  slidy_presentation: default
+  beamer_presentation: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r libraries, include=FALSE}
+library(kableExtra) #install.packages("kableExtra")
+library(date) #install.packages("date")
+library(ggplot2) #install.packages("ggplot")
+library(dplyr) #install.packages("dplyr")
+library(ggpubr) #install.packages("ggpubr")
+library(cowplot) #install.packages("cowplot")
+library(gridExtra) #install.packages("gridExtra")
+library(plotrix) #install.packages("plotrix")
+#library(gganimate) install.packages("gganimate")
+library(plotrix) # install.packages("plotrix")
+library(gcookbook) #install.packages("gcookbook")
+library(tidyverse) #install.packages("tidyverse")
+library(patchwork) #install.packages("patchwork")
+library(lubridate) #install.packages("lubridate")
+library(stringr)   #install.packages("stringr")
+library(plotly) #install.packages("plot_ly")
+#install.packages("devtools")
+#install.packages("Rtools")
+#devtools::install_github("ropensci/plotly", force = TRUE)
+library(DT) #install.packages("DT")
+```
+
+```{r, include=FALSE}
+netflix <- read.csv("netflix_titles.csv")
+str(netflix)
+summary(netflix)
+```
+
+```{r, include=FALSE}
+#converisone in date
+netflix$date_added <- parse_date_time(netflix$date_added,'mdy')
+netflix$release_year <- parse_date_time(netflix$release_year,'y')
+
+#pulizia dai null
+netflix$director[netflix$director==""] <- NA
+netflix$cast[netflix$cast==""] <- NA
+netflix$country[netflix$country==""] <- NA
+netflix$rating[netflix$rating==""] <- NA
+subs = subset(netflix,select = -c(show_id))
+
+#estrapolo i valori per "trovare i buchi"
+data.frame("variable"=c(colnames(subs)), 
+           "missing values count"=sapply(subs, function(x) sum(is.na(x))),
+           row.names=NULL)
+```
+![](logo.jpg){width=100%}
+
+
+
+## intro
+Il dataset è stato reperito su kaggle e contiene buona parte delle uscite 
+pesenti su netflix a livello internazionale.
+
+ Netflix è una delle piattaforme di streaming video e multimediali più popolari.
+ Fondata il 29 agosto del 1997 a Scotts Valley come attività di noleggio DVD e
+ videogiochi. Dal 2008 ha attivato un sevizio di streaming online e ad oggi ha
+ oltre 8000 film o programmi TV disponibili sulla loro piattaforma, a metà
+ del 2021 hanno oltre 200 milioni di abbonati a livello globale. Questo dataset
+ è costituito da elenchi di tutti i film e programmi TV disponibili su Netflix, 
+ insieme a dettagli come cast, registi, valutazioni, anno di uscita, durata, ecc.
+
+
+
+
+## cosa vogliamo scoprire?
+
+1. Quel'è la proporzione fra serie tv e film sulla piattaforma.
+   - Qual'è la loro durata media
+   - Il loro trend d'uscita.
+2. Quali sono i generi più presenti sulla piattaforma.
+3. Come si pone Netflix nei confronti delle restrizioni per la fruizione di 
+   contenuti in base all'età? 
+
+
+
+
+
+
+## rapporto serie/film
+```{r  results='asis'}
+type_count <- count(netflix,type)
+type_count$percen <- paste0(round((type_count$n/sum(type_count$n))*100,2),'%') 
+type_count %>%
+ kbl() %>%
+  kable_classic(full_width = F, html_font = "Cambria")%>%
+  kable_styling(bootstrap_options = "striped", font_size = 15) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+```{r results='asis'}
+film <- netflix %>% 
+  ggplot(aes(type,fill=type)) + 
+  geom_bar()+
+  scale_fill_brewer(palette='Pastel1')+
+  coord_flip() +
+  theme(legend.position = "none")+
+  geom_text(stat='count',aes(label=..count..),hjust=1.5)
+
+#come immagianvo ci sono molti più film rispetto alle serie tv
+
+serie <- type_count %>% 
+  ggplot(aes(x="",y=n,fill=type)) + 
+  geom_bar(stat = 'identity',position='fill') +
+  scale_y_continuous(labels = scales::percent)+
+  theme(legend.position = "none")+
+  scale_fill_brewer(palette = 'Pastel1')
+
+grid.arrange(film, serie, nrow = 1, ncol = 2)
+
+```
+
+
+## durata media 
+```{r}
+tv_show <- netflix %>% select(country, type, duration, rating, title) %>%
+  filter(type == "TV Show") %>% 
+  drop_na() %>% 
+  mutate(duration_season = parse_number(duration))
+
+
+film <- netflix%>%filter(type == "Movie") %>% 
+  mutate(duration = parse_number(duration)) %>% 
+  ggplot(aes(x = duration)) +
+  geom_density(fill="#FF9900", color="#003399", alpha=0.8) +
+  scale_x_continuous(labels = minutes) +
+  xlab("durata del film") +
+  ggtitle("densità della durata dei film")
+
+serie <- tv_show %>% 
+  select(duration_season) %>%
+  count(duration_season, sort = TRUE) %>%
+  ggplot(aes( x = as.factor(duration_season),
+              y = n,
+              label = n ) 
+         )+
+  geom_col(aes(fill = duration_season)) +
+  theme_light() +
+  theme(legend.position = "none") +
+  labs(x = "n° di stagioni rilasciate",
+       y = "n° serie",
+    title = "Distribuzione delle stagioni",
+    #subtitle = "Column Plot, Season distrbution",
+    #caption = "Kaggle: Netflix Movies and TV Shows",
+    fill = ""
+  )
+grid.arrange(film, serie, nrow = 1, ncol = 2)
+
+```
+
+## durata media film
+```{r}
+#estraggo i minutaggio più comune e lo raggruppo es: 136 film da 90 minuti
+netflix.movies <- netflix[!is.na(netflix$duration), ] #tolgo tutti i null
+n.timespan <- netflix.movies %>%
+    filter(type == "Movie") %>% #prendo i film
+    group_by(duration) %>% #raggruppo
+    count(sort=TRUE) %>% #metto in ordine
+    head(11) #prendo gli 11 più popolari
+
+n.timespan <- n.timespan[!n.timespan$duration == "min",] 
+ggplot(n.timespan, aes(x = reorder(duration,-n), y = n)) +
+        geom_col(fill = "#FF9900") +
+        ggtitle("Top 10 Durata media del film") +
+        labs(x = " ", y = "minutaggio") +
+        theme(plot.title = element_text(size = 15, hjust = 0.3),
+           panel.grid.minor = element_blank(),
+           panel.grid.major.x = element_blank(),
+           axis.title = element_text(size = 10),
+           axis.text = element_text(size = 12),
+           legend.text = element_text(size = 10),
+           legend.title = element_blank())
+```
+
+
+## linea di tendenza della durata dei film
+```{r}
+netflix %>% 
+  filter(type=='Movie'& release_year<="2020-02-01" & release_year>="2000-01-01") %>% 
+  mutate(movie_duration=substr(duration,1,nchar(as.character(duration))-4)) %>% 
+  mutate(movie_duration = as.integer(movie_duration)) %>% 
+  group_by(release_year) %>% 
+  summarise(avg_run = mean(movie_duration)) %>% 
+  ungroup() %>% 
+  plot_ly(x=~release_year,
+          y=~avg_run,
+          type='scatter',
+          mode = 'lines+markers')
+```
+
+
+
+## serie temporale
+```{r}
+netflix %>% 
+  filter(release_year<"2021-01-01" & release_year>="2000-01-01") %>% 
+  group_by(release_year,type) %>% 
+  count() %>% 
+  ggplot(aes(x=release_year,y=n,fill=type)) + 
+  geom_line(aes(color=type)) 
+```
+
+
+dal 2018/19 c'è stato un calo del tren di produzione di film al compenso le 
+serie tv hanno mantenuto un aumento costante ed a ridosso del 2020 il numero di 
+serie TV prodotte era superiore rispetto a quello dei . Questo potrebbe essere 
+dovuto alla crisi pandemica ed al fatto che per fare una serie serve meno lavore
+che per un film
+
+
+
+
+## film e serie più linghi del catalogo
+```{r out.width = "50%"}
+targhet <- c("Black Mirror: Bandersnatch" ,"Grey's Anatomy")
+x <- filter(netflix, title %in% targhet)
+x$cast = NULL
+x$director= NULL  
+x$show_id = NULL
+x$day = NULL
+x$month = NULL
+x$date_added = NULL
+
+x %>%
+ kbl() %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(bootstrap_options = "striped", font_size = 15) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  knitr::include_graphics('./black_mirror.jpg')
+  knitr::include_graphics('./greys anatomy2.png')
+```
+
+
+## come mai black mirror è così anomalmente lunga? 
+
+Black Mirror: Bandersnatch. 
+Un film interattivo (durata stimata di completamento 90 minuti).
+Pubblicato su Netflix il 28 dicembre 2018, pensato come parte del franchise di Black Mirror. È stato scritto da Charlie Brooker e diretto da David Slade.
+In Bandersnatch, è lo spettatore che prende le decisioni per il protagonista, un giovane programmatore interpretato da Fionn Whitehead, che nel 1984 crea un videogioco basato su un romanzo interattivo. Il film è basato su un videogioco di "Imagine Software" con lo stesso nome, mai pubblicato in seguito al fallimento dell'azienda. 
+Fra i vari riferimenti ci sono anche delle opere di Lewis Carroll in cui è presente una creatura chiamata Bandersnatch.
+
+
+
+
+
+## generi più presenti
+il genere intenrazionale è riferito a tutti i prodotto non americani
+```{r echo=FALSE,warning=FALSE,message=FALSE,error=FALSE}
+s <- netflix %>% group_by(rating) %>% count()
+subject = rep(s, times=15)
+
+x <- strsplit( netflix$listed_in, split = ", " )
+
+titles_listed_in <- data.frame( type = rep(netflix$type, sapply(x, length)), 
+                                listed_in = unlist(x) )
+titles_listed_in$listed_in <- as.character( gsub(",","",titles_listed_in$listed_in) )
+
+listed_film <- titles_listed_in %>% filter(type == "Movie") %>% 
+                          group_by(listed_in) %>% 
+                          summarise(count = n()) %>%
+                          arrange(desc(count)) %>% 
+                          top_n(20)
+listed_serieTv <- titles_listed_in %>% filter(type == "TV Show") %>% 
+                          group_by(listed_in) %>% 
+                          summarise(count = n()) %>%
+                          arrange(desc(count)) %>% 
+                          top_n(20)
+
+TopGenderfilm <- plot_ly( listed_film, 
+                          x = ~listed_in, 
+                          y = ~count, type = 'bar', 
+                          marker = list(color = 'darkblue')) %>% 
+                  layout( xaxis = list(categoryorder = "array", 
+                                       categoryarray = listed_film$listed_in,
+                                       yaxis = list(title = 'n°'),
+                                       title = "Movie"))
+
+TopGenderShow <- plot_ly( listed_serieTv, 
+                          x = ~listed_in, 
+                          y = ~count, type = 'bar',
+                          legendgroup="SHOW",
+                          marker = list(color = '0066CC') ) %>% 
+                  layout( xaxis=list(categoryorder = "array", 
+                                     categoryarray = listed_film$listed_in,
+                                     title="Show" ) 
+                          )
+
+subplot(TopGenderfilm, TopGenderShow) %>%
+  layout(title = '20 generi più presneti')
+```
+
+
+
+
+
+
+## Restrizioni sulla piattaforma globali
+
+- TV-MA: non dovrebbe essere visto da chi ha meno di 17 anni.
+- TV-14: non dovrebbe essere visto dai minori di 14 anni.
+- TV-PG: Uno spettacolo può essere visto da un pubblico più giovane ma si raccomanda la supervisione di un adulto.
+- PG-13: alcuni materiali potrebbero essere inappropriati per i bambini sotto i 13 anni.
+- R: Limitato, i minori di 17 anni devono essere affinacati da un genitore o di un adulto tutore.
+
+
+
+
+
+```{r}
+netflix %>% filter(rating!='NA',!str_detect(rating,regex('min'))) %>% 
+            mutate(rating=rating %>% 
+                   fct_infreq() %>% 
+                   fct_rev() ) %>% 
+  ggplot() + geom_bar( aes(rating,fill=rating), 
+                       color="blue", 
+                       fill=rgb(0.0,0.1,0.8,0.9) ) + 
+  guides(fill="none") 
+```
+
+
+## distribuzione restizioni d'età rlative
+```{r echo=FALSE,warning=FALSE,message=FALSE,error=FALSE}
+
+netflix %>% select(rating, type) %>%
+  filter(!is.na(rating)) %>%
+  mutate(rating = fct_lump(rating, 5)) %>%
+  group_by(rating, type) %>%
+  summarise(Count = n()) %>%
+  arrange(Count) %>%
+  plot_ly( x = ~ type ,
+           y = ~ Count,
+           type = "bar",
+           color = ~ rating,
+           text = ~ Count,
+           textposition = 'outside',
+           textfont = list(color = '#000000', size = 12)
+           ) %>%
+  layout(yaxis = list(categoryorder = "array",
+                      categoryarray = ~ Count) ) %>%
+  layout(
+    title = "Rating per tipo",
+    yaxis = list(title = "Type"),
+    xaxis = list(title = "Count"),
+    legend = list(title = list(text = '<b> Rating </b>'))
+  )
+```
+anche se i film hanno svariate valutazioni in più rispetto ai programmi TV la il
+"rating" per entrambi è la stesso (TV-MA).
+
+TV-MA
+ - Le persone con un'età inferiore ai 17 anni non dovrebbero vederlo
+ 
+ 
+ 
+## conlusione   
+netflix è una piattaforma per giovani, in specialmodo in fase adolescenziale
+avanzata. Sta probabilmente mostrando un intresse nello specializzarsi sulla 
+produzione di contenuti brevi e di facile fruizione. A giudicare dal cambio di 
+tendenza nella produzione di film ed alla distribuzione dei generi 
+(prevalentemente drama e comici). Tenendo anche in considerazione la soglia dell'
+attenzione, che va a diminuire con gli anni, ed allo stile di vita sempre più 
+frenetico che come società stiamo adottando è più faciele fruire di un contenuto
+di 30/40 minuti rispetto ad uno di 90. 
+
+
+
+## fonti
+  -   **articolo microsoft** sulla soglia dell'attenzione: https://dl.motamem.org/microsoft-attention-spans-research-report.pdf
+  -   **dataset**: https://www.kaggle.com/datasets/shivamb/netflix-shows
+
+  - **link esterni** : https://it.wikipedia.org/wiki/Black_Mirror:_Bandersnatch
+  - **librerie usate**: date, ggplot2, dplyr, ggpubr, cowplot, gridExtra, plotrix, 
+  gganimate, tidyverse, patchwork, lubridate, stringr, plotly ,DT
+
+
+
+
+
+
+
+
+
